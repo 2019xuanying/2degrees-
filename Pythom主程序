@@ -1,0 +1,145 @@
+import requests
+import json
+import time
+
+def find_quadruple_digits(numbers):
+    """
+    检查号码列表中是否存在尾号为四位相同数字的电话号码。
+    例如: ...8888, ...9999。
+
+    参数:
+    numbers (list): 电话号码字符串列表。
+
+    返回:
+    str: 找到的第一个符合条件的号码，如果找不到则返回 None。
+    """
+    for number in numbers:
+        # 获取号码的后四位
+        last_four = number[-4:]
+        # 检查这四位数字是否全部相同
+        if len(set(last_four)) == 1:
+            print(f"找到符合尾号四位相同条件的号码: {number}")
+            return number
+    return None
+
+def find_consecutive_digits(numbers):
+    """
+    检查号码列表中是否存在包含连续或反向连续数字序列的电话号码。
+    例如: ...1234..., ...5678..., ...4321..., ...8765...。
+    序列长度要求大于等于4位。
+
+    参数:
+    numbers (list): 电话号码字符串列表。
+
+    返回:
+    str: 找到的第一个符合条件的号码，如果找不到则返回 None。
+    """
+    for number in numbers:
+        # 遍历电话号码的每一个可能的起始位置
+        for i in range(len(number) - 3):
+            sub_sequence = number[i:i+4]
+            # 检查是否为正向连续数字
+            is_consecutive_up = True
+            for j in range(3):
+                if int(sub_sequence[j+1]) - int(sub_sequence[j]) != 1:
+                    is_consecutive_up = False
+                    break
+            if is_consecutive_up:
+                print(f"找到符合连续数字条件的号码: {number}")
+                return number
+
+            # 检查是否为反向连续数字
+            is_consecutive_down = True
+            for j in range(3):
+                if int(sub_sequence[j]) - int(sub_sequence[j+1]) != 1:
+                    is_consecutive_down = False
+                    break
+            if is_consecutive_down:
+                print(f"找到符合反向连续数字条件的号码: {number}")
+                return number
+            
+    return None
+
+def main():
+    """
+    主函数，用于发起请求并筛选电话号码。
+    脚本会循环执行，直到找到符合条件的号码并得到用户确认退出。
+    """
+    url = "https://api.2degrees.nz/sales/v3/qualification/voice/availablePhoneNumbers"
+    
+    # 尽可能完整地模拟浏览器请求头
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
+        "Accept": "*/*",
+        "Content-Type": "application/json",
+        "Origin": "https://prepay-checkout.2degrees.nz",
+        "Referer": "https://prepay-checkout.2degrees.nz/",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-site",
+        "correlationid": "checkout-v2-20250913171615-E8E7F7H53YK05EZ0",
+        "traceparent": "00-f522183df08b4cecaad9eba63161dcb4-b4ecadadedf68f1c-01",
+        "tracestate": "x-td.app=checkout-v2",
+        "x-request-guid": "890d9698-4719-46f2-a3da-18723305d2d9"
+    }
+    
+    # 使用你提供的完整请求体
+    payload = {
+        "additionalProductKey": "mobile2_linerental",
+        "numberType": "MobileV2",
+        "orderToken": "e8abbefb-66a1-4f9d-bc8b-30e8f894a234",
+        "count": 6,
+        "businessGroup": "2dPrepay"
+    }
+
+    attempt_count = 0
+    # 开始循环，直到找到一个符合条件的号码
+    while True:
+        attempt_count += 1
+        print(f"--- 正在进行第 {attempt_count} 次尝试 ---")
+        try:
+            print("正在向服务器请求电话号码...")
+            response = requests.post(url, headers=headers, json=payload, timeout=10) # 设置超时时间
+            response.raise_for_status()  # 如果请求不成功，会引发HTTPError
+
+            data = response.json()
+            
+            if "availableServiceEntities" in data and data["availableServiceEntities"]:
+                # 提取电话号码列表
+                phone_numbers = [item["serviceEntity"] for item in data["availableServiceEntities"]]
+                print(f"已获取 {len(phone_numbers)} 个电话号码：{phone_numbers}")
+
+                # 优先寻找尾号四位相同的号码
+                found_number = find_quadruple_digits(phone_numbers)
+
+                # 如果没有，则寻找包含四位连续数字的号码
+                if not found_number:
+                    found_number = find_consecutive_digits(phone_numbers)
+                
+                # 如果找到了符合条件的号码，则提示用户并等待选择
+                if found_number:
+                    print("\n找到一个符合条件的号码。")
+                    choice = input("是否继续扫描？(y/n): ").lower()
+                    if choice != 'y':
+                        print("程序退出。")
+                        break
+                    else:
+                        print("继续扫描...")
+                        
+                else:
+                    print("本轮未找到符合条件的号码，5秒后重新尝试...")
+                    time.sleep(5) # 等待5秒后再次尝试
+            else:
+                print("响应中未找到可用的电话号码，5秒后重新尝试...")
+                time.sleep(5)
+                
+        except requests.exceptions.RequestException as e:
+            print(f"请求失败：{e}")
+            print("连接异常，10秒后重新尝试...")
+            time.sleep(10) # 如果连接失败，等待更长时间再重试
+        except json.JSONDecodeError:
+            print("响应内容不是有效的JSON格式，5秒后重新尝试...")
+            time.sleep(5)
+
+if __name__ == "__main__":
+    main()
