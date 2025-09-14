@@ -1,6 +1,7 @@
 import requests
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def find_quadruple_digits(numbers):
     """
@@ -18,7 +19,6 @@ def find_quadruple_digits(numbers):
         last_four = number[-4:]
         # 检查这四位数字是否全部相同
         if len(set(last_four)) == 1:
-            print(f"找到符合尾号四位相同条件的号码: {number}")
             return number
     return None
 
@@ -45,7 +45,6 @@ def find_consecutive_digits(numbers):
                     is_consecutive_up = False
                     break
             if is_consecutive_up:
-                print(f"找到符合连续数字条件的号码: {number}")
                 return number
 
             # 检查是否为反向连续数字
@@ -55,19 +54,33 @@ def find_consecutive_digits(numbers):
                     is_consecutive_down = False
                     break
             if is_consecutive_down:
-                print(f"找到符合反向连续数字条件的号码: {number}")
                 return number
             
     return None
 
+def fetch_numbers(url, headers, payload):
+    """
+    向服务器发起单个请求并返回电话号码列表或 None。
+    这个函数将被多个线程同时调用。
+    """
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        if "availableServiceEntities" in data and data["availableServiceEntities"]:
+            return [item["serviceEntity"] for item in data["availableServiceEntities"]]
+    except requests.exceptions.RequestException as e:
+        print(f"请求失败: {e}")
+    except json.JSONDecodeError:
+        print("响应内容不是有效的JSON格式。")
+    return None
+
 def main():
     """
-    主函数，用于发起请求并筛选电话号码。
-    脚本会循环执行，直到找到符合条件的号码并得到用户确认退出。
+    主函数，使用多线程并发发起请求，并筛选电话号码。
     """
     url = "https://api.2degrees.nz/sales/v3/qualification/voice/availablePhoneNumbers"
     
-    # 尽可能完整地模拟浏览器请求头
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
         "Accept": "*/*",
@@ -83,7 +96,6 @@ def main():
         "x-request-guid": "890d9698-4719-46f2-a3da-18723305d2d9"
     }
     
-    # 使用你提供的完整请求体
     payload = {
         "additionalProductKey": "mobile2_linerental",
         "numberType": "MobileV2",
@@ -93,53 +105,42 @@ def main():
     }
 
     attempt_count = 0
-    # 开始循环，直到找到一个符合条件的号码
-    while True:
-        attempt_count += 1
-        print(f"--- 正在进行第 {attempt_count} 次尝试 ---")
-        try:
-            print("正在向服务器请求电话号码...")
-            response = requests.post(url, headers=headers, json=payload, timeout=10) # 设置超时时间
-            response.raise_for_status()  # 如果请求不成功，会引发HTTPError
-
-            data = response.json()
+    # 使用 ThreadPoolExecutor 管理10个线程
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        while True:
+            attempt_count += 1
+            print(f"--- 正在进行第 {attempt_count} 批尝试 (并发10个请求) ---")
             
-            if "availableServiceEntities" in data and data["availableServiceEntities"]:
-                # 提取电话号码列表
-                phone_numbers = [item["serviceEntity"] for item in data["availableServiceEntities"]]
-                print(f"已获取 {len(phone_numbers)} 个电话号码：{phone_numbers}")
+            # 提交10个并发任务到线程池
+            futures = [executor.submit(fetch_numbers, url, headers, payload) for _ in range(10)]
+            
+            found_number = None
+            for future in as_completed(futures):
+                phone_numbers = future.result()
+                if phone_numbers:
+                    print(f"已获取 {len(phone_numbers)} 个电话号码：{phone_numbers}")
 
-                # 优先寻找尾号四位相同的号码
-                found_number = find_quadruple_digits(phone_numbers)
+                    # 优先寻找尾号四位相同的号码
+                    found_number = find_quadruple_digits(phone_numbers)
+                    if found_number:
+                        break  # 如果找到，跳出内部循环
 
-                # 如果没有，则寻找包含四位连续数字的号码
-                if not found_number:
+                    # 如果没有，则寻找包含四位连续数字的号码
                     found_number = find_consecutive_digits(phone_numbers)
-                
-                # 如果找到了符合条件的号码，则提示用户并等待选择
-                if found_number:
-                    print("\n找到一个符合条件的号码。")
-                    choice = input("是否继续扫描？(y/n): ").lower()
-                    if choice != 'y':
-                        print("程序退出。")
-                        break
-                    else:
-                        print("继续扫描...")
-                        
+                    if found_number:
+                        break # 如果找到，跳出内部循环
+            
+            if found_number:
+                print(f"\n找到一个符合条件的号码。")
+                choice = input("是否继续扫描？(y/n): ").lower()
+                if choice != 'y':
+                    print("程序退出。")
+                    break
                 else:
-                    print("本轮未找到符合条件的号码，5秒后重新尝试...")
-                    time.sleep(5) # 等待5秒后再次尝试
+                    print("继续扫描...")
             else:
-                print("响应中未找到可用的电话号码，5秒后重新尝试...")
+                print("本轮未找到符合条件的号码，5秒后重新尝试下一批请求...")
                 time.sleep(5)
                 
-        except requests.exceptions.RequestException as e:
-            print(f"请求失败：{e}")
-            print("连接异常，10秒后重新尝试...")
-            time.sleep(10) # 如果连接失败，等待更长时间再重试
-        except json.JSONDecodeError:
-            print("响应内容不是有效的JSON格式，5秒后重新尝试...")
-            time.sleep(5)
-
 if __name__ == "__main__":
     main()
